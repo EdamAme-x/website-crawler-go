@@ -5,7 +5,7 @@ import (
 )
 
 func main() {
-	c := clawler.CreateClawler("https://activetk.jp")
+	c := clawler.CreateClawler("https://activetk.jp", false)
 
 	c.Start()
 }
