@@ -2,12 +2,11 @@ package clawler
 
 import (
 	"fmt"
+	"golang.org/x/exp/slices"
 	"io/ioutil"
 	"net/http"
 	"regexp"
 	"strings"
-
-	"golang.org/x/exp/slices"
 )
 
 type Clawler struct {
@@ -36,9 +35,9 @@ func (c *Clawler) Clawl() {
 		route := c.CurrentSearchRoutes[0]
 		c.CurrentSearchRoutes = c.CurrentSearchRoutes[1:]
 
-		FoundResult := FindLinks(route, c.SameOrigin, c.URL)
+		FoundResult := FindLinks(route, c.SameOrigin, c.URL, pickOriginFromURL(route))
 
-		for _, result := range removeMultipleValue(FoundResult, c.FoundRoutes...) {
+		for _, result := range removeMultipleValue(FoundResult, append(c.FoundRoutes, c.CurrentSearchRoutes...)...) {
 			fmt.Printf("Found: %s\n", result)
 		}
 
@@ -50,6 +49,14 @@ func (c *Clawler) Clawl() {
 			break
 		}
 	}
+}
+
+func pickOriginFromURL(url string) string {
+	host := strings.Split(url, "//")
+	if len(host) > 2 {
+		return "https://" + strings.Split(url, "//")[1]
+	}
+	return url
 }
 
 func removeMultipleValue(values []string, subValues ...string) []string {
@@ -67,7 +74,7 @@ func removeMultipleValue(values []string, subValues ...string) []string {
 var STATIC_REGEXP_HREF_AND_SRC, _ = regexp.Compile(`\s(href|src)=["'](.+?)['"][\s>]`)
 var STATIC_REGEXP_WINDOW_OPEN, _ = regexp.Compile(`window\.open\(["'](.+?)["']`)
 
-func FindLinks(url string, sameOrigin bool, originUrl string) []string {
+func FindLinks(url string, sameOrigin bool, originUrl string, baseURL string) []string {
 	fmt.Printf("Find: %s\n", url)
 	resp, err := http.Get(url)
 
@@ -94,8 +101,10 @@ func FindLinks(url string, sameOrigin bool, originUrl string) []string {
 		foundLinks = append(foundLinks, link[1])
 	}
 
+	foundLinks = removeMultipleValue(foundLinks)
+
 	if len(foundLinks) > 0 {
-		return sanitizeLinks(foundLinks, url, sameOrigin, originUrl)
+		return sanitizeLinks(foundLinks, baseURL, sameOrigin, originUrl)
 	}
 
 	return []string{}
@@ -127,17 +136,19 @@ func sanitizeLinks(links []string, baseURL string, sameOrigin bool, originUrl st
 		if isAbsoluteURL(link) {
 			url = link
 		} else if isHostname(link) {
-			url = "https://"+link
+			url = "https://" + link
 		} else if isRelativePath(link) {
-			url = urlFixer(baseURL)+"/"+pathFixer(link)
+			url = urlFixer(baseURL) + "/" + pathFixer(link)
 		} else {
-			url = "https://"+urlFixer(urlPickHost(baseURL))+"/"+pathFixer(link)
+			url = "https://" + urlFixer(urlPickHost(baseURL)) + "/" + pathFixer(link)
 		}
+
+		url = fixURL(url, baseURL)
 
 		if sameOrigin && !strings.HasPrefix(url, originUrl) {
 			continue
 		}
-		
+
 		result = append(result, url)
 	}
 
@@ -164,6 +175,24 @@ func urlPickHost(url string) string {
 	} else {
 		url = strings.Split(url, "/")[0]
 	}
+
+	return url
+}
+
+var STATIC_REGEXP_INVALID_URL, _ = regexp.Compile(`^https?://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9]{1,6}/(https?://.+)`)
+
+func fixURL(url string, baseURL string) string {
+	url = strings.Trim(url, " ")
+	urlSubmatch := STATIC_REGEXP_INVALID_URL.FindAllStringSubmatch(url, 1)
+
+	if len(urlSubmatch) > 0 {
+		url = urlSubmatch[0][1]
+	}
+	url = strings.Replace(url, urlFixer(baseURL)+"/https://", "https://", 1)
+	url = strings.Replace(url, urlFixer(baseURL)+"/http://", "http://", 1)
+	url = strings.ReplaceAll(url, "https://data:", "data:")
+	url = strings.ReplaceAll(url, "https://https:/", "https://")
+	url = strings.ReplaceAll(url, "https://https://", "https://")
 
 	return url
 }
