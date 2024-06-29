@@ -14,14 +14,16 @@ type Clawler struct {
 	FoundRoutes         []string
 	CurrentSearchRoutes []string
 	SameOrigin          bool
+	BlockList           []string
 }
 
-func CreateClawler(url string, sameOrigin bool) *Clawler {
+func CreateClawler(url string, sameOrigin bool, blockList []string) *Clawler {
 	return &Clawler{
 		URL:                 url,
 		FoundRoutes:         []string{url},
 		CurrentSearchRoutes: []string{url},
 		SameOrigin:          sameOrigin,
+		BlockList:           blockList,
 	}
 }
 
@@ -35,7 +37,7 @@ func (c *Clawler) Clawl() {
 		route := c.CurrentSearchRoutes[0]
 		c.CurrentSearchRoutes = c.CurrentSearchRoutes[1:]
 
-		FoundResult := FindLinks(route, c.SameOrigin, c.URL, pickOriginFromURL(route))
+		FoundResult := FindLinks(route, c.SameOrigin, c.URL, pickOriginFromURL(route), c.BlockList)
 
 		for _, result := range removeMultipleValue(FoundResult, append(c.FoundRoutes, c.CurrentSearchRoutes...)...) {
 			fmt.Printf("Found: %s\n", result)
@@ -71,10 +73,10 @@ func removeMultipleValue(values []string, subValues ...string) []string {
 	return result
 }
 
-var STATIC_REGEXP_HREF_AND_SRC, _ = regexp.Compile(`\s(href|src)=["'](.+?)['"][\s>]`)
+var STATIC_REGEXP_HREF_AND_SRC, _ = regexp.Compile(`\s(href|src)=["'](.+?)['"][\s>/]`)
 var STATIC_REGEXP_WINDOW_OPEN, _ = regexp.Compile(`window\.open\(["'](.+?)["']`)
 
-func FindLinks(url string, sameOrigin bool, originUrl string, baseURL string) []string {
+func FindLinks(url string, sameOrigin bool, originUrl string, baseURL string, blockList []string) []string {
 	fmt.Printf("Find: %s\n", url)
 	resp, err := http.Get(url)
 
@@ -104,7 +106,7 @@ func FindLinks(url string, sameOrigin bool, originUrl string, baseURL string) []
 	foundLinks = removeMultipleValue(foundLinks)
 
 	if len(foundLinks) > 0 {
-		return sanitizeLinks(foundLinks, baseURL, sameOrigin, originUrl)
+		return sanitizeLinks(foundLinks, baseURL, sameOrigin, originUrl, url, blockList)
 	}
 
 	return []string{}
@@ -127,25 +129,48 @@ func isRelativePath(link string) bool {
 	return STATIC_REGEXP_RELATIVE_PATH.MatchString(link)
 }
 
-func sanitizeLinks(links []string, baseURL string, sameOrigin bool, originUrl string) []string {
+var STATIC_REGEXP_HASH = regexp.MustCompile(`^#.*`)
+
+func isHash(link string) bool {
+	return STATIC_REGEXP_HASH.MatchString(link)
+}
+
+func sanitizeLinks(links []string, baseURL string, sameOrigin bool, originUrl string, rawURL string, blockList []string) []string {
 	result := []string{}
 
 	for _, link := range links {
 		var url string
 
+		if strings.HasPrefix(link, "data:") {
+			continue
+		} else if strings.HasPrefix(link, "//") {
+			link = "https:" + link
+		}
+
 		if isAbsoluteURL(link) {
 			url = link
 		} else if isHostname(link) {
-			url = "https://" + link
+			url = "https://" + urlFixer(link) + "/" + strings.Replace(rawURL, urlFixer(baseURL) + "/", "", 1)
 		} else if isRelativePath(link) {
-			url = urlFixer(baseURL) + "/" + pathFixer(link)
+			url = urlFixer(rawURL) + "/" + pathFixer(link)
+		} else if isHash(link) {
+			url = urlFixer(rawURL) + "#" + link
 		} else {
 			url = "https://" + urlFixer(urlPickHost(baseURL)) + "/" + pathFixer(link)
 		}
 
-		url = fixURL(url, baseURL)
+		url, err := fixURL(url, baseURL)
 
-		if sameOrigin && !strings.HasPrefix(url, originUrl) {
+		isBlock := false
+
+		for _, block := range blockList {
+			if strings.Contains(url, block) {
+				isBlock = true
+				break
+			}
+		}
+
+		if err != nil || sameOrigin && !strings.HasPrefix(url, originUrl) || isBlock {
 			continue
 		}
 
@@ -180,8 +205,13 @@ func urlPickHost(url string) string {
 }
 
 var STATIC_REGEXP_INVALID_URL, _ = regexp.Compile(`^https?://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9]{1,6}/(https?://.+)`)
+var STATIC_REGEXP_JAVASCRIPT, _ = regexp.Compile(`.*[a-zA-Z0-9]{1,6}/javascript:.*`)
 
-func fixURL(url string, baseURL string) string {
+func fixURL(url string, baseURL string) (string, error) {
+	if STATIC_REGEXP_JAVASCRIPT.MatchString(url) {
+		return url, fmt.Errorf("JavaScript URL: %s", url)
+	}
+
 	url = strings.Trim(url, " ")
 	urlSubmatch := STATIC_REGEXP_INVALID_URL.FindAllStringSubmatch(url, 1)
 
@@ -190,9 +220,8 @@ func fixURL(url string, baseURL string) string {
 	}
 	url = strings.Replace(url, urlFixer(baseURL)+"/https://", "https://", 1)
 	url = strings.Replace(url, urlFixer(baseURL)+"/http://", "http://", 1)
-	url = strings.ReplaceAll(url, "https://data:", "data:")
 	url = strings.ReplaceAll(url, "https://https:/", "https://")
 	url = strings.ReplaceAll(url, "https://https://", "https://")
 
-	return url
+	return url, nil
 }

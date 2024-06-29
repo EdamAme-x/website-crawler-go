@@ -18,7 +18,7 @@ func main() {
 		fmt.Println("Hint: Punycode is escaped? or Prefix with https or http?")
 		return
 	}
-	c := clawler.CreateClawler(url, false)
+	c := clawler.CreateClawler(url, false, os.Args[2:])
 
 	c.Start()
 }
