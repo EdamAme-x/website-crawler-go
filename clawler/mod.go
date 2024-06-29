@@ -43,7 +43,7 @@ func (c *Clawler) Clawl() {
 		}
 
 		c.CurrentSearchRoutes = removeMultipleValue(append(c.CurrentSearchRoutes, FoundResult...), c.FoundRoutes...)
-		c.FoundRoutes = removeMultipleValue(append(c.FoundRoutes, FoundResult...))
+		c.FoundRoutes = removeMultipleValue(append(c.FoundRoutes, route))
 
 		if len(c.CurrentSearchRoutes) == 0 {
 			fmt.Printf("Crawling %s done\n", c.URL)
@@ -68,7 +68,7 @@ var STATIC_REGEXP_HREF_AND_SRC, _ = regexp.Compile(`\s(href|src)=["'](.+?)['"][\
 var STATIC_REGEXP_WINDOW_OPEN, _ = regexp.Compile(`window\.open\(["'](.+?)["']`)
 
 func FindLinks(url string, sameOrigin bool, originUrl string) []string {
-	fmt.Println(url)
+	fmt.Printf("Find: %s\n", url)
 	resp, err := http.Get(url)
 
 	if err != nil {
